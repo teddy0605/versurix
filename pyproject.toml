@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "versurix"
+version = "0.1.0"
+description = "YouTube song to lyrics using local mlx-whisper on Apple Silicon"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2025.1.1",
+    "mlx-whisper>=0.4.3",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+vocals = [
+    "demucs",
+    "torchcodec",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.scripts]
+versurix = "versurix:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

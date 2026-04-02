@@ -1,0 +1,18 @@
+{
+  "urls": [],
+  "language": "es",
+  "model": "mlx-community/whisper-large-v3-turbo",
+  "output_format": "txt",
+  "output_dir": "downloads",
+  "keep_audio": false,
+  "verbose": false,
+  "enhance_vocals": false,
+  "isolate_vocals": false,
+  "local": false,
+  "whisper": {
+    "condition_on_previous_text": false,
+    "no_speech_threshold": 0.1,
+    "logprob_threshold": -2.0,
+    "compression_ratio_threshold": 3.0
+  }
+}
