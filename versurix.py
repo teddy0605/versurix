@@ -332,6 +332,14 @@ def parse_args() -> argparse.Namespace:
         help="Keep downloaded MP3 file after transcribing",
     )
     parser.add_argument(
+        "--download-only",
+        action="store_true",
+        help=(
+            "Only download audio with yt-dlp into the output directory; skip Whisper, "
+            "lyrics, and SRT. Ignores --isolate-vocals / --enhance-vocals. Not for use with --local."
+        ),
+    )
+    parser.add_argument(
         "--local",
         action="store_true",
         help=(
@@ -686,7 +694,7 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
 
     args.output_dir = Path(args.output_dir)
 
-    for flag in ("keep_audio", "verbose", "enhance_vocals", "isolate_vocals", "local"):
+    for flag in ("keep_audio", "download_only", "verbose", "enhance_vocals", "isolate_vocals", "local"):
         if not getattr(args, flag) and config.get(flag):
             setattr(args, flag, True)
 
@@ -749,12 +757,19 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use a temp dir for audio unless --keep-audio
-    if args.keep_audio:
+    # Use a temp dir for audio unless we keep it on disk (transcription + keep, or download-only)
+    if args.keep_audio or args.download_only:
         audio_dir = args.output_dir
     else:
         _tmpdir = tempfile.mkdtemp()
         audio_dir = Path(_tmpdir)
+
+    if args.download_only and args.local:
+        logger.error(
+            "--download-only only applies to URLs (yt-dlp). For local files you already have the audio; "
+            "omit --download-only or omit --local."
+        )
+        sys.exit(1)
 
     audio_path: Optional[Path] = None
     t_start = time.monotonic()
@@ -786,6 +801,11 @@ def main() -> None:
                 log_detail(
                     f"{audio_path.name}  ·  {uploader}  ·  {duration}s  ·  {time.monotonic() - t_dl:.1f}s"
                 )
+
+            if args.download_only:
+                log_section("Wrote")
+                log_detail(audio_path.name)
+                continue
 
             transcribe_path = audio_path
             if args.isolate_vocals:
@@ -837,8 +857,8 @@ def main() -> None:
             for p in written:
                 log_detail(str(p.name))
 
-            # Clean up temp audio after each URL if not keeping
-            if not args.keep_audio and audio_path and audio_path.exists():
+            # Clean up temp audio after each URL if not keeping (download-only always keeps)
+            if not args.keep_audio and not args.download_only and audio_path and audio_path.exists():
                 audio_path.unlink()
                 logger.debug(f"Cleaned up temporary audio file: {audio_path}")
 

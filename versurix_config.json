@@ -5,6 +5,7 @@
   "output_format": "txt",
   "output_dir": "downloads",
   "keep_audio": false,
+  "download_only": false,
   "verbose": false,
   "enhance_vocals": false,
   "isolate_vocals": false,

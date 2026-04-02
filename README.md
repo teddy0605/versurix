@@ -46,7 +46,8 @@ VERSURIX_URL=https://www.youtube.com/watch?v=VIDEO_ID versurix
 | `--output-dir` | Where to write lyrics, SRT, and kept MP3s (default `downloads/`) |
 | `--isolate-vocals` | Demucs — needs **`pip install --editable ".[vocals]"`** first |
 | `--enhance-vocals` | FFmpeg EQ on vocals |
-| `--keep-audio` | Keep MP3 |
+| `--keep-audio` | Keep MP3 after transcribing |
+| `--download-only` | yt-dlp only: save MP3 under **`--output-dir`**, no Whisper / lyrics / SRT (not with **`--local`**) |
 | `--local` | Input paths are local audio (skip yt-dlp) |
 | `--verbose` | Whisper tqdm on stderr |
 | `--config` | Config file (default `./versurix_config.json`) |
@@ -63,6 +64,7 @@ If the config file is missing, built-in defaults apply.
 versurix 'https://www.youtube.com/watch?v=VIDEO_ID' --language en --output-format srt
 versurix 'https://a' 'https://b' --isolate-vocals   # after pip install --editable ".[vocals]"
 versurix --local "./track.mp3"
+versurix 'https://www.youtube.com/watch?v=VIDEO_ID' --download-only
 # Or list URLs in versurix_config.json ("urls") / env, then: versurix --config ./versurix_config.json
 ```
 

@@ -167,6 +167,10 @@ class TestParseArgs:
         args = self._parse(["--keep-audio", "https://youtube.com/watch?v=test"])
         assert args.keep_audio is True
 
+    def test_download_only_flag(self):
+        args = self._parse(["--download-only", "https://youtube.com/watch?v=test"])
+        assert args.download_only is True
+
     def test_local_flag(self):
         args = self._parse(["--local", "/tmp/song.mp3"])
         assert args.local is True
@@ -320,7 +324,7 @@ def _blank_args(**overrides):
     """Return a Namespace with all sentinel/default values, optionally overridden."""
     defaults = dict(
         language=None, model=None, output_format=None, output_dir=None,
-        keep_audio=False, verbose=False,
+        keep_audio=False, download_only=False, verbose=False,
         enhance_vocals=False, isolate_vocals=False, local=False,
     )
     defaults.update(overrides)
@@ -358,6 +362,10 @@ class TestApplyConfig:
     def test_config_sets_bool_flag(self):
         args = versurix.apply_config(_blank_args(), {"keep_audio": True})
         assert args.keep_audio is True
+
+    def test_download_only_from_config(self):
+        args = versurix.apply_config(_blank_args(), {"download_only": True})
+        assert args.download_only is True
 
     def test_cli_bool_not_overridden_by_config(self):
         args = versurix.apply_config(_blank_args(isolate_vocals=True), {"isolate_vocals": False})
