@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -266,6 +267,142 @@ def resolve_urls(positional: List[str], config: Dict[str, Any]) -> List[str]:
     return urls_from_config(config)
 
 
+def default_cookies_browser() -> str:
+    """Platform default when --cookies-from-browser is passed without a browser name."""
+    return "safari" if sys.platform == "darwin" else "chrome"
+
+
+def parse_cookies_from_browser(spec: str) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
+    """
+    Parse yt-dlp's BROWSER[+KEYRING][:PROFILE][::CONTAINER] into the tuple YoutubeDL expects.
+    """
+    try:
+        from yt_dlp.cookies import SUPPORTED_BROWSERS, SUPPORTED_KEYRINGS
+    except ImportError:
+        logger.error("Missing dependency: pip install yt-dlp (or: brew install yt-dlp)")
+        sys.exit(1)
+
+    mobj = re.fullmatch(
+        r"""(?x)
+            (?P<name>[^+:]+)
+            (?:\s*\+\s*(?P<keyring>[^:]+))?
+            (?:\s*:\s*(?!:)(?P<profile>.+?))?
+            (?:\s*::\s*(?P<container>.+))?
+        """,
+        spec,
+    )
+    if mobj is None:
+        logger.error(
+            f"Invalid --cookies-from-browser value {spec!r}. "
+            "Use BROWSER[:PROFILE], e.g. chrome, safari, or firefox:default."
+        )
+        sys.exit(1)
+
+    browser_name, keyring, profile, container = mobj.group("name", "keyring", "profile", "container")
+    browser_name = browser_name.lower()
+    if browser_name not in SUPPORTED_BROWSERS:
+        logger.error(
+            f'Unsupported browser {browser_name!r} for --cookies-from-browser. '
+            f'Supported: {", ".join(sorted(SUPPORTED_BROWSERS))}'
+        )
+        sys.exit(1)
+    if keyring is not None:
+        keyring = keyring.upper()
+        if keyring not in SUPPORTED_KEYRINGS:
+            logger.error(
+                f'Unsupported keyring {keyring!r} for --cookies-from-browser. '
+                f'Supported: {", ".join(sorted(SUPPORTED_KEYRINGS))}'
+            )
+            sys.exit(1)
+    return browser_name, profile, keyring, container
+
+
+def build_ytdlp_auth_opts(
+    cookies: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build yt-dlp cookie/auth options from CLI or config values."""
+    opts: Dict[str, Any] = {}
+    if cookies:
+        cookie_path = Path(cookies).expanduser()
+        if not cookie_path.is_file():
+            logger.error(f"Cookies file not found: {cookie_path}")
+            sys.exit(1)
+        opts["cookiefile"] = str(cookie_path)
+    if cookies_from_browser:
+        opts["cookiesfrombrowser"] = parse_cookies_from_browser(cookies_from_browser)
+    return opts
+
+
+def build_ytdlp_download_opts(
+    output_dir: Path,
+    *,
+    video: bool = False,
+    cookies: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
+    progress_hook: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Build yt-dlp options for audio (mp3) or video (mp4) download."""
+    opts: Dict[str, Any] = {
+        "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        **build_ytdlp_auth_opts(cookies, cookies_from_browser),
+    }
+    if progress_hook is not None:
+        opts["progress_hooks"] = [progress_hook]
+
+    if video:
+        opts["format"] = "bv*+ba/b"
+        opts["merge_output_format"] = "mp4"
+    else:
+        opts["format"] = "bestaudio/best"
+        opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "0",
+        }]
+
+    js_runtimes = system_js_runtimes()
+    if js_runtimes:
+        opts["js_runtimes"] = js_runtimes
+    return opts
+
+
+def resolve_download_path(info: Dict[str, Any], output_dir: Path, *, video: bool) -> Path:
+    """Find the downloaded media file from yt-dlp info dict."""
+    if info.get("requested_downloads"):
+        for entry in reversed(info["requested_downloads"]):
+            filepath = entry.get("filepath")
+            if filepath:
+                path = Path(filepath)
+                if path.exists():
+                    return path
+
+    for key in ("filepath", "_filename"):
+        if info.get(key):
+            path = Path(str(info[key]))
+            if path.exists():
+                return path
+
+    ext = "mp4" if video else "mp3"
+    fallback = output_dir / f"{info.get('title', info['id'])}.{ext}"
+    return fallback
+
+
+def system_js_runtimes() -> Dict[str, Dict[str, Any]]:
+    """
+    Use only a JS runtime already on PATH (never install node/npm/deno via versurix).
+
+    yt-dlp needs this to solve YouTube's n-challenge when browser cookies are used.
+    """
+    runtimes: Dict[str, Dict[str, Any]] = {}
+    if shutil.which("node"):
+        runtimes["node"] = {}
+    return runtimes
+
+
 def parse_args() -> argparse.Namespace:
     """
     Parse command line arguments.
@@ -335,9 +472,15 @@ def parse_args() -> argparse.Namespace:
         "--download-only",
         action="store_true",
         help=(
-            "Only download audio with yt-dlp into the output directory; skip Whisper, "
-            "lyrics, and SRT. Ignores --isolate-vocals / --enhance-vocals. Not for use with --local."
+            "Only download with yt-dlp into the output directory; skip Whisper, "
+            "lyrics, and SRT. Default: MP3 audio. Use --download-video for MP4. "
+            "Ignores --isolate-vocals / --enhance-vocals. Not for use with --local."
         ),
+    )
+    parser.add_argument(
+        "--download-video",
+        action="store_true",
+        help="With --download-only, save best-quality video as MP4 instead of MP3 audio",
     )
     parser.add_argument(
         "--local",
@@ -364,6 +507,24 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Show Whisper decoding progress",
+    )
+    parser.add_argument(
+        "--cookies",
+        default=None,
+        metavar="FILE",
+        help="Netscape-format cookies file for yt-dlp (age-restricted or private videos)",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        nargs="?",
+        const=default_cookies_browser(),
+        default=None,
+        metavar="BROWSER[:PROFILE]",
+        help=(
+            "Load YouTube cookies from a browser via yt-dlp "
+            f"(supported: chrome, safari, firefox, …). "
+            f"Omit BROWSER to use {default_cookies_browser()} on this system."
+        ),
     )
     return parser.parse_args()
 
@@ -394,19 +555,29 @@ def load_local_audio(path_str: str) -> Tuple[Path, Dict[str, Any]]:
     return p, info
 
 
-def download_audio(url: str, output_dir: Path) -> Tuple[Path, Dict[str, Any]]:
+def download_audio(
+    url: str,
+    output_dir: Path,
+    *,
+    video: bool = False,
+    cookies: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
+) -> Tuple[Path, Dict[str, Any]]:
     """
-    Download audio from URL as MP3.
+    Download media from URL as MP3 audio or MP4 video.
     
     Args:
         url: YouTube URL or any yt-dlp supported URL
-        output_dir: Directory to save the downloaded audio
+        output_dir: Directory to save the downloaded file
+        video: When True, download best video+audio merged to MP4
+        cookies: Optional Netscape cookies file for yt-dlp
+        cookies_from_browser: Optional browser spec for yt-dlp cookie extraction
         
     Returns:
-        Tuple containing (path to downloaded MP3, info dictionary)
+        Tuple containing (path to downloaded file, info dictionary)
         
     Raises:
-        SystemExit: If download fails or audio file is not found
+        SystemExit: If download fails or media file is not found
     """
     try:
         import tqdm
@@ -445,26 +616,33 @@ def download_audio(url: str, output_dir: Path) -> Tuple[Path, Dict[str, Any]]:
             pbar.close()
             pbar = None
 
-    ydl_opts: Dict[str, Any] = {
-        "format": "bestaudio/best",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "0",
-        }],
-        "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "progress_hooks": [progress_hook],
-    }
+    ydl_opts = build_ytdlp_download_opts(
+        output_dir,
+        video=video,
+        cookies=cookies,
+        cookies_from_browser=cookies_from_browser,
+        progress_hook=progress_hook,
+    )
 
     info: Dict[str, Any]
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
     except DownloadError as e:
-        logger.error(f"Download failed: {e}")
+        err = str(e)
+        logger.error(f"Download failed: {err}")
+        if "n challenge solving failed" in err.lower() or "requested format is not available" in err.lower():
+            hints: List[str] = []
+            if not shutil.which("node"):
+                hints.append("install Node.js yourself (e.g. brew install node) — versurix never installs it")
+            try:
+                import yt_dlp_ejs  # noqa: F401
+            except ImportError:
+                hints.append(
+                    'pip install "versurix[youtube]" (official pinned yt-dlp-ejs on PyPI; no npm)'
+                )
+            if hints:
+                logger.error("YouTube JS challenge fix: " + "; ".join(hints))
         sys.exit(1)
     finally:
         if pbar is not None:
@@ -473,16 +651,14 @@ def download_audio(url: str, output_dir: Path) -> Tuple[Path, Dict[str, Any]]:
             except Exception:
                 pass
 
-    try:
-        mp3_path = Path(info["requested_downloads"][0]["filepath"])
-    except (KeyError, IndexError):
-        mp3_path = output_dir / f"{info.get('title', info['id'])}.mp3"
+    media_path = resolve_download_path(info, output_dir, video=video)
 
-    if not mp3_path.exists():
-        logger.error(f"Expected audio file not found: {mp3_path}")
+    if not media_path.exists():
+        kind = "video" if video else "audio"
+        logger.error(f"Expected {kind} file not found: {media_path}")
         sys.exit(1)
 
-    return mp3_path, info
+    return media_path, info
 
 
 def enhance_vocals_ffmpeg(audio_path: Path, output_dir: Path) -> Path:
@@ -692,9 +868,16 @@ def apply_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.N
         if getattr(args, key) is None:
             setattr(args, key, config.get(key, hardcoded_default))
 
+    for key in ("cookies", "cookies_from_browser"):
+        if getattr(args, key) is None and config.get(key):
+            setattr(args, key, config[key])
+
     args.output_dir = Path(args.output_dir)
 
-    for flag in ("keep_audio", "download_only", "verbose", "enhance_vocals", "isolate_vocals", "local"):
+    for flag in (
+        "keep_audio", "download_only", "download_video", "verbose",
+        "enhance_vocals", "isolate_vocals", "local",
+    ):
         if not getattr(args, flag) and config.get(flag):
             setattr(args, flag, True)
 
@@ -771,6 +954,10 @@ def main() -> None:
         )
         sys.exit(1)
 
+    if args.download_video and not args.download_only:
+        logger.error("--download-video only applies with --download-only.")
+        sys.exit(1)
+
     audio_path: Optional[Path] = None
     t_start = time.monotonic()
 
@@ -792,7 +979,13 @@ def main() -> None:
                 log_detail(url)
                 log_section("Download")
                 t_dl = time.monotonic()
-                audio_path, info = download_audio(url, audio_dir)
+                audio_path, info = download_audio(
+                    url,
+                    audio_dir,
+                    video=args.download_video,
+                    cookies=args.cookies,
+                    cookies_from_browser=args.cookies_from_browser,
+                )
                 source_ref = url
                 title = str(info.get("title", "Unknown"))
                 uploader = str(info.get("uploader") or info.get("channel", "Unknown"))

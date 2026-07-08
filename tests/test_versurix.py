@@ -171,6 +171,12 @@ class TestParseArgs:
         args = self._parse(["--download-only", "https://youtube.com/watch?v=test"])
         assert args.download_only is True
 
+    def test_download_video_flag(self):
+        args = self._parse([
+            "--download-only", "--download-video", "https://youtube.com/watch?v=test",
+        ])
+        assert args.download_video is True
+
     def test_local_flag(self):
         args = self._parse(["--local", "/tmp/song.mp3"])
         assert args.local is True
@@ -178,6 +184,18 @@ class TestParseArgs:
     def test_verbose_flag(self):
         args = self._parse(["--verbose", "https://youtube.com/watch?v=test"])
         assert args.verbose is True
+
+    def test_cookies_flag(self):
+        args = self._parse(["--cookies", "/tmp/cookies.txt", "https://youtube.com/watch?v=test"])
+        assert args.cookies == "/tmp/cookies.txt"
+
+    def test_cookies_from_browser_with_name(self):
+        args = self._parse(["--cookies-from-browser", "chrome", "https://youtube.com/watch?v=test"])
+        assert args.cookies_from_browser == "chrome"
+
+    def test_cookies_from_browser_default_browser(self):
+        args = self._parse(["https://youtube.com/watch?v=test", "--cookies-from-browser"])
+        assert args.cookies_from_browser == versurix.default_cookies_browser()
 
     def test_output_dir_default_is_none(self):
         args = self._parse(["https://youtube.com/watch?v=test"])
@@ -324,8 +342,9 @@ def _blank_args(**overrides):
     """Return a Namespace with all sentinel/default values, optionally overridden."""
     defaults = dict(
         language=None, model=None, output_format=None, output_dir=None,
-        keep_audio=False, download_only=False, verbose=False,
+        keep_audio=False, download_only=False, download_video=False, verbose=False,
         enhance_vocals=False, isolate_vocals=False, local=False,
+        cookies=None, cookies_from_browser=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -367,6 +386,10 @@ class TestApplyConfig:
         args = versurix.apply_config(_blank_args(), {"download_only": True})
         assert args.download_only is True
 
+    def test_download_video_from_config(self):
+        args = versurix.apply_config(_blank_args(), {"download_video": True})
+        assert args.download_video is True
+
     def test_cli_bool_not_overridden_by_config(self):
         args = versurix.apply_config(_blank_args(isolate_vocals=True), {"isolate_vocals": False})
         assert args.isolate_vocals is True
@@ -379,4 +402,60 @@ class TestApplyConfig:
         args = versurix.apply_config(_blank_args(), {"output_dir": "/tmp/lyrics"})
         assert isinstance(args.output_dir, Path)
         assert args.output_dir == Path("/tmp/lyrics")
+
+    def test_cookies_from_browser_from_config(self):
+        args = versurix.apply_config(_blank_args(), {"cookies_from_browser": "safari"})
+        assert args.cookies_from_browser == "safari"
+
+    def test_cookies_from_config(self):
+        args = versurix.apply_config(_blank_args(), {"cookies": "/tmp/cookies.txt"})
+        assert args.cookies == "/tmp/cookies.txt"
+
+
+class TestYtdlpAuthOpts:
+    def test_parse_cookies_from_browser(self):
+        assert versurix.parse_cookies_from_browser("chrome") == ("chrome", None, None, None)
+        assert versurix.parse_cookies_from_browser("firefox:default") == (
+            "firefox", "default", None, None
+        )
+
+    def test_build_ytdlp_auth_opts_cookiefile(self, tmp_path):
+        cookie_file = tmp_path / "cookies.txt"
+        cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+        opts = versurix.build_ytdlp_auth_opts(cookies=str(cookie_file))
+        assert opts["cookiefile"] == str(cookie_file)
+
+    def test_build_ytdlp_auth_opts_browser(self):
+        opts = versurix.build_ytdlp_auth_opts(cookies_from_browser="safari")
+        assert opts["cookiesfrombrowser"] == ("safari", None, None, None)
+
+    def test_missing_cookie_file_exits(self):
+        with pytest.raises(SystemExit):
+            versurix.build_ytdlp_auth_opts(cookies="/no/such/cookies.txt")
+
+    def test_system_js_runtimes_uses_path_only(self, monkeypatch):
+        monkeypatch.setattr(versurix.shutil, "which", lambda name: "/usr/bin/node" if name == "node" else None)
+        assert versurix.system_js_runtimes() == {"node": {}}
+
+    def test_system_js_runtimes_empty_without_node(self, monkeypatch):
+        monkeypatch.setattr(versurix.shutil, "which", lambda _name: None)
+        assert versurix.system_js_runtimes() == {}
+
+    def test_build_ytdlp_download_opts_audio(self, tmp_path):
+        opts = versurix.build_ytdlp_download_opts(tmp_path, video=False)
+        assert opts["format"] == "bestaudio/best"
+        assert opts["postprocessors"][0]["preferredcodec"] == "mp3"
+        assert "merge_output_format" not in opts
+
+    def test_build_ytdlp_download_opts_video(self, tmp_path):
+        opts = versurix.build_ytdlp_download_opts(tmp_path, video=True)
+        assert opts["format"] == "bv*+ba/b"
+        assert opts["merge_output_format"] == "mp4"
+        assert "postprocessors" not in opts
+
+    def test_resolve_download_path_from_requested_downloads(self, tmp_path):
+        media = tmp_path / "clip.mp4"
+        media.write_text("x", encoding="utf-8")
+        info = {"requested_downloads": [{"filepath": str(media)}]}
+        assert versurix.resolve_download_path(info, tmp_path, video=True) == media
 

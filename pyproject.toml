@@ -14,6 +14,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Official yt-dlp companion (PyPI wheel with pinned solver scripts — not npm, no runtime downloads).
+youtube = [
+    "yt-dlp-ejs==0.8.0",
+]
 vocals = [
     "demucs",
     "torchcodec",

@@ -10,6 +10,7 @@
   "enhance_vocals": false,
   "isolate_vocals": false,
   "local": false,
+  "cookies_from_browser": "firefox",
   "whisper": {
     "condition_on_previous_text": false,
     "no_speech_threshold": 0.1,
