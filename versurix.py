@@ -348,6 +348,9 @@ def build_ytdlp_download_opts(
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        # yt-dlp defaults to the whole playlist when a URL is both a video and a
+        # playlist (watch?v=...&list=...). versurix transcribes one file per URL.
+        "noplaylist": True,
         **build_ytdlp_auth_opts(cookies, cookies_from_browser),
     }
     if progress_hook is not None:

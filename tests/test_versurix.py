@@ -447,6 +447,12 @@ class TestYtdlpAuthOpts:
         assert opts["postprocessors"][0]["preferredcodec"] == "mp3"
         assert "merge_output_format" not in opts
 
+    def test_download_opts_do_not_expand_video_and_playlist_urls(self, tmp_path):
+        """A watch URL that also carries a playlist id is one track, not the whole playlist."""
+        for video in (False, True):
+            opts = versurix.build_ytdlp_download_opts(tmp_path, video=video)
+            assert opts["noplaylist"] is True
+
     def test_build_ytdlp_download_opts_video(self, tmp_path):
         opts = versurix.build_ytdlp_download_opts(tmp_path, video=True)
         assert opts["format"] == "bv*+ba/b"
