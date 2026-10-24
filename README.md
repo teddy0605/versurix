@@ -28,7 +28,7 @@ First run downloads the Whisper model (~800MB, cached under `~/.cache/huggingfac
 
 ## Usage
 
-**URLs:** Pass **one or more links as arguments** (space-separated — each token is one URL). If you pass none, URLs are taken from the **`urls`** array in `versurix_config.json`, or from **`VERSURIX_URL`** / **`VERSURIX_URLS`** (comma-separated).
+**URLs:** Pass **one or more links as arguments** (space-separated — each token is one URL). A link that is both a video and a playlist downloads only that video. If you pass none, URLs are taken from the **`urls`** array in `versurix_config.json`, or from **`VERSURIX_URL`** / **`VERSURIX_URLS`** (comma-separated).
 
 **zsh and `?`:** Quote URLs that contain `?`, or escape **`watch\?v=`**.
 
